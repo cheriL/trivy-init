@@ -1,0 +1,142 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  labels:
+    app: harbor
+    component: trivy
+  name: harbor-trivy
+  namespace: harbor
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: harbor
+      component: trivy
+  serviceName: harbor-trivy
+  template:
+    metadata:
+      labels:
+        app: harbor
+        component: trivy
+    spec:
+      initContainers:
+      - name: trivy-init
+        image: trivy-init:0.0.1
+        imagePullPolicy: IfNotPresent
+        command: ["/bin/sh"]
+        args: ["-c", "set -x && mkdir -p /home/scanner/.cache/trivy && cp -r /trivy/. /home/scanner/.cache/trivy/ || true"]
+        #- chown -R 10000:10000 /home/scanner/.cache/trivy
+        volumeMounts:
+        - mountPath: /home/scanner/.cache
+          name: data
+      containers:
+      - env:
+        - name: HTTP_PROXY
+        - name: HTTPS_PROXY
+        - name: NO_PROXY
+          value: my-harbor-harbor-core,my-harbor-harbor-jobservice,my-harbor-harbor-database,my-harbor-harbor-chartmuseum,my-harbor-harbor-notary-server,my-harbor-harbor-notary-signer,my-harbor-harbor-registry,my-harbor-harbor-portal,my-harbor-harbor-trivy,my-harbor-harbor-exporter,127.0.0.1,localhost,.local,.internal
+        - name: SCANNER_LOG_LEVEL
+          value: info
+        - name: SCANNER_TRIVY_CACHE_DIR
+          value: /home/scanner/.cache/trivy
+        - name: SCANNER_TRIVY_REPORTS_DIR
+          value: /home/scanner/.cache/reports
+        - name: SCANNER_TRIVY_DEBUG_MODE
+          value: "false"
+        - name: SCANNER_TRIVY_VULN_TYPE
+          value: os,library
+        - name: SCANNER_TRIVY_GITHUB_TOKEN
+          # valueFrom:
+          #   secretKeyRef:
+          #     key: gitHubToken
+          #     name: my-harbor-harbor-trivy
+        - name: SCANNER_TRIVY_SEVERITY
+          value: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
+        - name: SCANNER_TRIVY_IGNORE_UNFIXED
+          value: "false"
+        - name: SCANNER_TRIVY_SKIP_UPDATE
+          value: "true"
+        - name: SCANNER_TRIVY_INSECURE
+          value: "false"
+        - name: SCANNER_API_SERVER_ADDR
+          value: :8080
+        # - name: SCANNER_REDIS_URL
+        #   valueFrom:
+        #     secretKeyRef:
+        #       key: redisURL
+        #       name: my-harbor-harbor-trivy
+        # - name: SCANNER_STORE_REDIS_URL
+        #   valueFrom:
+        #     secretKeyRef:
+        #       key: redisURL
+        #       name: my-harbor-harbor-trivy
+        # - name: SCANNER_JOB_QUEUE_REDIS_URL
+        #   valueFrom:
+        #     secretKeyRef:
+        #       key: redisURL
+        #       name: my-harbor-harbor-trivy
+        image: goharbor/trivy-adapter-photon:v2.2.2
+        imagePullPolicy: IfNotPresent
+        livenessProbe:
+          failureThreshold: 10
+          httpGet:
+            path: /probe/healthy
+            port: api-server
+            scheme: HTTP
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          successThreshold: 1
+          timeoutSeconds: 1
+        name: trivy
+        ports:
+        - containerPort: 8080
+          name: api-server
+          protocol: TCP
+        readinessProbe:
+          failureThreshold: 3
+          httpGet:
+            path: /probe/ready
+            port: api-server
+            scheme: HTTP
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          successThreshold: 1
+          timeoutSeconds: 1
+        resources:
+          limits:
+            cpu: "1"
+            memory: 1Gi
+          requests:
+            cpu: 200m
+            memory: 256Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          privileged: false
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+        volumeMounts:
+        - mountPath: /home/scanner/.cache
+          name: data
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      securityContext:
+        fsGroup: 10000
+        runAsUser: 0
+      terminationGracePeriodSeconds: 30
+  volumeClaimTemplates:
+  - apiVersion: v1
+    kind: PersistentVolumeClaim
+    metadata:
+      labels:
+        app: harbor
+        component: trivy
+      name: data
+    spec:
+      accessModes:
+      - ReadWriteOnce
+      resources:
+        requests:
+          storage: 2Gi
+      storageClassName: standard
+      volumeMode: Filesystem
